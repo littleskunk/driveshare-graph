@@ -10,6 +10,9 @@ import sys
 import os
 import simplejson
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+from pycoin.encoding import a2b_hashed_base58
+from binascii import hexlify
+
 
 INDIVIDUAL_MAX_HEIGHT = 199999
 SECONDS_IN_DAY = 86400
@@ -43,6 +46,14 @@ def init_table(conn, cursor, collection):
 
 def update_table(conn, cursor, collection): # pragma: no cover
     """Updates the summaries table if there is new data in collection."""
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='summaries'")
+    if len(cursor.fetchall()) == 0:
+        create_summary_table(conn, cursor)
+
+    cursor.execute("SELECT count(date) FROM summaries")
+    if cursor.fetchone()[0] == 0:
+        init_table(conn, cursor, collection)
+
     cursor.execute('SELECT MAX(date) FROM summaries')
     date = cursor.fetchone()[0]
     max_date = dt.datetime.strptime(date,  '%Y-%m-%d %H:%M:%S')
@@ -73,7 +84,10 @@ def create_daily_summary(conn, cursor, collection, date):
     for doc in collection.find({'time': {'$gte': date, '$lt': next_date}}):
         doc_time = time.mktime(doc['time'].timetuple())
         for farmer in doc['farmers']:
-            auth_address = farmer['btc_addr']
+            if 'nodeid' in farmer:
+                auth_address = farmer['nodeid']
+            else:
+                auth_address = hexlify(a2b_hashed_base58(farmer['btc_addr'])[1:])
             if (auth_address in first_dates):
                 if last_dates[auth_address] == previous_time:
                     uptimes[auth_address] += doc_time - previous_time
@@ -126,30 +140,32 @@ def assign_points(conn, cursor, date):
         conn.commit()
 
 
-def average_height(btc_address, first_date, last_date, collection):
+def average_height(nodeid, first_date, last_date, collection):
     """Returns the average height of the specified btc address
     between the first_date and last_date.
 
     Args:
-        btc_address: btc_address (authentication address) for farmer
+        nodeid: nodeid (authentication address) for farmer
         first_date: first datetime in date range
         last_date: last datetime in date range
         collection: MongoDB collection of data on farmers
 
     Returns:
-        avg_height: average height of the build with btc_address between
+        avg_height: average height of the build with nodeid between
                     first_date and last_date
     """
     pipeline = [
-        {'$match': {'farmers.btc_addr': btc_address,
+        {'$match': {'farmers.nodeid': nodeid,
                     'time': {'$gte': first_date, '$lt': last_date}}},
-        {'$project': {'_id': 0, 'farmers.btc_addr': 1, 'farmers.height': 1}},
+        {'$project': {'_id': 0, 'farmers.nodeid': 1, 'farmers.height': 1}},
         {'$unwind': '$farmers'},
-        {'$match': {'farmers.btc_addr': btc_address}}
+        {'$match': {'farmers.nodeid': nodeid}}
     ]
     height_array = []
     for doc in collection.aggregate(pipeline):
         height_array.append(doc['farmers']['height'])
+    if len(height_array) == 0:
+        return 0
     return sum(height_array)/len(height_array)
 
 
@@ -208,8 +224,8 @@ def end_date(farmers_collection): # pragma: no cover
     return last_date
 
 
-def json_month_summary(cursor, btc_addr):
-    """Return json summary for btc_addr in the past month"""
+def json_month_summary(cursor, nodeid):
+    """Return json summary for nodeid in the past month"""
     summaries = []
     current_date = dt.datetime.now() - timedelta(days = 1)
     last_date = dt.datetime(current_date.year, current_date.month, current_date.day, 0, 0, 0)
@@ -217,7 +233,7 @@ def json_month_summary(cursor, btc_addr):
     day_count = (last_date - first_date).days + 1
     for single_date in (first_date + timedelta(days=n) for n in range(day_count)):
         cursor.execute('SELECT date, uptime, duration, height, points FROM summaries '
-                       'WHERE auth_address = ? AND date = ?', (str(btc_addr), str(single_date),))
+                       'WHERE auth_address = ? AND date = ?', (str(nodeid), str(single_date),))
         data = cursor.fetchone()
         if (data is not None):
             date = data[0]

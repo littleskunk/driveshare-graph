@@ -57,11 +57,11 @@ def daily_data():
     return json_totals
 
 
-@app.route("/api/summary/<btc_addr>")
-def api_summary(btc_addr):
+@app.route("/api/summary/<nodeid>")
+def api_summary(nodeid):
     conn = sqlite3.connect('summary.db')
     cursor = conn.cursor()
-    json_summary = farmer_summary.json_month_summary(cursor, btc_addr)
+    json_summary = farmer_summary.json_month_summary(cursor, nodeid)
     return json_summary
 
 

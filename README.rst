@@ -29,7 +29,7 @@ Go to http://graph.driveshare.org to see network statistics. Built using the Fla
 
 **API**
 
-Go to http://graph.driveshare.org/api/summary/<btc_addr> to see daily summaries for the build with the specified btc address over the past 30 days.
+Go to http://graph.driveshare.org/api/summary/<nodeid> to see daily summaries for the build with the specified btc address over the past 30 days.
 
 
 Ubuntu Digital Ocean Node

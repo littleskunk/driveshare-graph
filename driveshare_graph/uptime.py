@@ -5,6 +5,8 @@ import sqlite3
 import time
 import pygal
 from pygal.style import BlueStyle
+from pycoin.encoding import a2b_hashed_base58
+from binascii import hexlify
 
 connection = MongoClient('localhost', 27017)
 collection = connection['GroupB']['farmers']
@@ -41,15 +43,18 @@ def init_farmers_table(conn, cursor, collection):
     for doc in collection.find({}).sort('time', 1):
         doc_time = time.mktime(doc['time'].timetuple())
         for farmer in doc['farmers']:
-            btc_address = farmer['btc_addr']
-            if (btc_address in first_dates):
-                if last_dates[btc_address] == previous_time:
-                    uptimes[btc_address] += doc_time - previous_time
-                last_dates[btc_address] = doc_time
+            if 'nodeid' in farmer:
+                nodeid = farmer['nodeid']
             else:
-                first_dates[btc_address] = doc_time
-                last_dates[btc_address] = doc_time
-                uptimes[btc_address] = 0
+                nodeid = hexlify(a2b_hashed_base58(farmer['btc_addr'])[1:])
+            if (nodeid in first_dates):
+                if last_dates[nodeid] == previous_time:
+                    uptimes[nodeid] += doc_time - previous_time
+                last_dates[nodeid] = doc_time
+            else:
+                first_dates[nodeid] = doc_time
+                last_dates[nodeid] = doc_time
+                uptimes[nodeid] = 0
         previous_time = doc_time
 
     for key, value in first_dates.iteritems():
@@ -93,7 +98,15 @@ def update_farmers_table(conn, cursor, collection):
         conn: connection to sqlite3 database containing the table, farmers 
         cursor: conn's cursor
         collection: MongoDB collection of farmers 
-    """ 
+    """
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='farmers'")
+    if len(cursor.fetchall()) == 0:
+        create_farmers_table(conn, cursor)
+
+    cursor.execute("SELECT count(last_date) FROM farmers")
+    if cursor.fetchone()[0] == 0:
+        init_farmers_table(conn, cursor, collection)
+ 
     cursor.execute('SELECT MAX(last_date) FROM farmers')
     last_time = int(cursor.fetchone()[0])
     last_date = dt_from_timestamp(last_time)
@@ -101,7 +114,10 @@ def update_farmers_table(conn, cursor, collection):
     for doc in collection.find({'time': {'$gt': last_date}}).sort('time', 1):
         doc_time = timestamp_from_dt(doc['time'])
         for farmer in doc['farmers']:
-            address = farmer['btc_addr']
+            if 'nodeid' in farmer:
+                address = farmer['nodeid']
+            else:
+                address = hexlify(a2b_hashed_base58(farmer['btc_addr'])[1:])
             if address_in_db(cursor, address):
                 cursor.execute('''SELECT MAX(last_date) FROM farmers WHERE
                                   address=?''', (str(address),))
@@ -185,7 +201,7 @@ def uptime_distribution(cursor, collection): # pragma: no cover
     """ 
     begin_date = dt.datetime.now() - timedelta(days = 7)
     farmers = collection.find({'time': {'$gte': begin_date}}
-                              ).distinct('farmers.btc_addr')
+                              ).distinct('farmers.nodeid')
     distribution = {0: 0, 5: 0, 10: 0, 15: 0, 20: 0, 25: 0, 30: 0, 35: 0, 40: 0,
                     45: 0, 50: 0, 55: 0, 60: 0, 65: 0, 70: 0, 75: 0, 80: 0,
                     85: 0, 90: 0, 95: 0}
@@ -211,7 +227,7 @@ def active_average_uptime(cursor, collection): # pragma: no cover
     """ 
     begin_date = dt.datetime.now() - timedelta(days=7)
     farmers = collection.find({'time': {'$gte':begin_date}}
-                              ).distinct('farmers.btc_addr')
+                              ).distinct('farmers.nodeid')
     uptime_percentages = []
     for farmer in farmers:
         cursor.execute('''SELECT (uptime / (last_date - first_date)) * 100
