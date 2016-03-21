@@ -5,8 +5,6 @@ import sqlite3
 import time
 import pygal
 from pygal.style import BlueStyle
-from pycoin.encoding import a2b_hashed_base58
-from binascii import hexlify
 
 connection = MongoClient('localhost', 27017)
 collection = connection['GroupB']['farmers']
@@ -15,17 +13,11 @@ collection = connection['GroupB']['farmers']
 def create_farmers_table(conn, cursor):
     """Creates a farmer table."""
     cursor.execute(''' CREATE TABLE farmers 
-        (address CHAR(34) PRIMARY KEY    NOT NULL,
+        (nodeid CHAR(40) PRIMARY KEY    NOT NULL,
          first_date       REAL           NOT NULL,
          last_date        REAL           NOT NULL, 
          uptime           REAL);''')
     conn.commit()
-
-
-def create_time_index(collection): # pragma: no cover
-    time_index = IndexModel([('time', ASCENDING)])
-    collection.create_indexes([time_index])
-
 
 def init_farmers_table(conn, cursor, collection):
     """
@@ -43,10 +35,7 @@ def init_farmers_table(conn, cursor, collection):
     for doc in collection.find({}).sort('time', 1):
         doc_time = time.mktime(doc['time'].timetuple())
         for farmer in doc['farmers']:
-            if 'nodeid' in farmer:
-                nodeid = farmer['nodeid']
-            else:
-                nodeid = hexlify(a2b_hashed_base58(farmer['btc_addr'])[1:])
+            nodeid = farmer['nodeid']
             if (nodeid in first_dates):
                 if last_dates[nodeid] == previous_time:
                     uptimes[nodeid] += doc_time - previous_time
@@ -58,21 +47,21 @@ def init_farmers_table(conn, cursor, collection):
         previous_time = doc_time
 
     for key, value in first_dates.iteritems():
-        address = key
+        nodeid = key
         first_date = value
         last_date = last_dates[key]
         uptime = uptimes[key]
 
-        cursor.execute('''INSERT INTO farmers (address, first_date, last_date,
+        cursor.execute('''INSERT INTO farmers (nodeid, first_date, last_date,
                           uptime) VALUES(?, ?, ?, ?)''',
-                       (str(address), first_date, last_date, uptime))
+                       (str(nodeid), first_date, last_date, uptime))
         conn.commit()
 
 
-def address_in_db(cursor, address):
-    """Returns true if address is in database, false otherwise."""
-    cursor.execute('SELECT address FROM farmers WHERE address=?',
-                   (str(address),))
+def nodeid_in_db(cursor, nodeid):
+    """Returns true if nodeid is in database, false otherwise."""
+    cursor.execute('SELECT nodeid FROM farmers WHERE nodeid=?',
+                   (str(nodeid),))
     data = cursor.fetchone()
     if data is None:
         return False
@@ -111,30 +100,27 @@ def update_farmers_table(conn, cursor, collection):
     last_time = int(cursor.fetchone()[0])
     last_date = dt_from_timestamp(last_time)
 
-    for doc in collection.find({'time': {'$gt': last_date}}).sort('time', 1):
+    for doc in collection.find({'time': {'$gt': last_time}}).sort('time', 1):
         doc_time = timestamp_from_dt(doc['time'])
         for farmer in doc['farmers']:
-            if 'nodeid' in farmer:
-                address = farmer['nodeid']
-            else:
-                address = hexlify(a2b_hashed_base58(farmer['btc_addr'])[1:])
-            if address_in_db(cursor, address):
+            nodeid = farmer['nodeid']
+            if nodeid_in_db(cursor, nodeid):
                 cursor.execute('''SELECT MAX(last_date) FROM farmers WHERE
-                                  address=?''', (str(address),))
+                                  nodeid=?''', (str(nodeid),))
                 farmer_time = int(cursor.fetchone()[0])
                 if farmer_time == last_time:
                     uptime = doc_time - farmer_time
                     cursor.execute('''UPDATE farmers SET last_date=?, uptime=uptime+?
-                                      WHERE address=?''', (farmer_time, uptime, str(address),))
+                                      WHERE nodeid=?''', (farmer_time, uptime, str(nodeid),))
                     conn.commit()
                 else:
                     cursor.execute('''UPDATE farmers SET last_date=? WHERE
-                                      address=?''', (farmer_time, str(address),))
+                                      nodeid=?''', (farmer_time, str(nodeid),))
                     conn.commit()
             else:
-                cursor.execute('''INSERT INTO farmers (address, first_date,
+                cursor.execute('''INSERT INTO farmers (nodeid, first_date,
                                   last_date, uptime) VALUES (?, ?, ?, ?) ''',
-                                  (str(address), doc_time, doc_time, 0))
+                                  (str(nodeid), doc_time, doc_time, 0))
                 conn.commit()
             last_time = doc_time
     conn.commit()
@@ -205,9 +191,9 @@ def uptime_distribution(cursor, collection): # pragma: no cover
     distribution = {0: 0, 5: 0, 10: 0, 15: 0, 20: 0, 25: 0, 30: 0, 35: 0, 40: 0,
                     45: 0, 50: 0, 55: 0, 60: 0, 65: 0, 70: 0, 75: 0, 80: 0,
                     85: 0, 90: 0, 95: 0}
-    for farmer in farmers: 
+    for farmer in farmers:
         cursor.execute('''SELECT (uptime / (last_date - first_date)) * 100
-                          FROM farmers WHERE address=?  AND
+                          FROM farmers WHERE nodeid=?  AND
                           last_date - first_date > 0''', (str(farmer),))
         uptime = cursor.fetchone()
         if uptime is None:
@@ -231,7 +217,7 @@ def active_average_uptime(cursor, collection): # pragma: no cover
     uptime_percentages = []
     for farmer in farmers:
         cursor.execute('''SELECT (uptime / (last_date - first_date)) * 100
-                          FROM farmers WHERE address = ? AND (last_date - first_date) > 0''',
+                          FROM farmers WHERE nodeid = ? AND (last_date - first_date) > 0''',
                        (farmer,))
         uptime = cursor.fetchone() 
         if uptime is None:

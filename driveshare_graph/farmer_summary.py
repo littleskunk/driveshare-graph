@@ -10,9 +10,6 @@ import sys
 import os
 import simplejson
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from pycoin.encoding import a2b_hashed_base58
-from binascii import hexlify
-
 
 INDIVIDUAL_MAX_HEIGHT = 199999
 SECONDS_IN_DAY = 86400
@@ -23,16 +20,16 @@ def create_summary_table(conn, cursor): # pragma: no cover
     cursor.execute('''CREATE TABLE summaries
                       (payout_address CHAR(34)     NOT NULL,
                       date            TEXT         NOT NULL,
-                      auth_address    TEXT         NOT NULL,
+                      nodeid          CHAR(40)     NOT NULL,
                       uptime          REAL,
                       duration        REAL,
                       height          INTEGER,
                       points          REAL  default 0,
-                      PRIMARY KEY (auth_address, date));''')
+                      PRIMARY KEY (nodeid, date));''')
     conn.commit()
 
 
-def init_table(conn, cursor, collection):
+def init_summary_table(conn, cursor, collection):
     """Initializes the summaries table."""
     client = MongoClient('localhost', 27017)
     collection = client['GroupB']['farmers']
@@ -52,7 +49,7 @@ def update_table(conn, cursor, collection): # pragma: no cover
 
     cursor.execute("SELECT count(date) FROM summaries")
     if cursor.fetchone()[0] == 0:
-        init_table(conn, cursor, collection)
+        init_summary_table(conn, cursor, collection)
 
     cursor.execute('SELECT MAX(date) FROM summaries')
     date = cursor.fetchone()[0]
@@ -84,31 +81,28 @@ def create_daily_summary(conn, cursor, collection, date):
     for doc in collection.find({'time': {'$gte': date, '$lt': next_date}}):
         doc_time = time.mktime(doc['time'].timetuple())
         for farmer in doc['farmers']:
-            if 'nodeid' in farmer:
-                auth_address = farmer['nodeid']
+            nodeid = farmer['nodeid']
+            if (nodeid in first_dates):
+                if last_dates[nodeid] == previous_time:
+                    uptimes[nodeid] += doc_time - previous_time
+                last_dates[nodeid] = doc_time
             else:
-                auth_address = hexlify(a2b_hashed_base58(farmer['btc_addr'])[1:])
-            if (auth_address in first_dates):
-                if last_dates[auth_address] == previous_time:
-                    uptimes[auth_address] += doc_time - previous_time
-                last_dates[auth_address] = doc_time
-            else:
-                first_dates[auth_address] = doc_time
-                last_dates[auth_address] = doc_time
-                payout_addresses[auth_address] = farmer['payout_addr']
-                uptimes[auth_address] = 0
+                first_dates[nodeid] = doc_time
+                last_dates[nodeid] = doc_time
+                payout_addresses[nodeid] = farmer['payout_addr']
+                uptimes[nodeid] = 0
         previous_time = doc_time
     for key in first_dates:
-        auth_address = key
+        nodeid = key
         summary_date = date
         payout_address = payout_addresses[key]
         uptime = uptimes[key]
         duration = last_dates[key] - first_dates[key]
-        height = average_height(auth_address, date, next_date, collection)
-        cursor.execute('''INSERT INTO summaries (auth_address, date,
+        height = average_height(nodeid, date, next_date, collection)
+        cursor.execute('''INSERT INTO summaries (nodeid, date,
                           payout_address, uptime, duration, height)
                           VALUES (?, ?, ?, ?, ? ,?)''',
-                       (str(auth_address), str(summary_date), payout_address, uptime,
+                       (str(nodeid), str(summary_date), payout_address, uptime,
                        duration, height))
         conn.commit()
 
@@ -116,16 +110,16 @@ def create_daily_summary(conn, cursor, collection, date):
 def assign_points(conn, cursor, date):
     """Returns the number of points awarded for the given size,
     uptime, and duration."""
-    cursor.execute('''SELECT auth_address FROM summaries WHERE date=?''',
+    cursor.execute('''SELECT nodeid FROM summaries WHERE date=?''',
                    (str(date),))
-    address_list = cursor.fetchall()
-    for address in address_list:
-        address = ''.join(address)
-        cursor.execute('''SELECT auth_address, uptime, duration, height FROM summaries
-                       WHERE auth_address = ? AND date = ?''',
-                       (str(address), str(date),))
+    nodeid_list = cursor.fetchall()
+    for nodeid in nodeid_list:
+        nodeid = ''.join(nodeid)
+        cursor.execute('''SELECT nodeid, uptime, duration, height FROM summaries
+                       WHERE nodeid = ? AND date = ?''',
+                       (str(nodeid), str(date),))
         data = cursor.fetchone()
-        address = data[0]
+        nodeid = data[0]
         uptime = data[1]
         duration = data[2]
         size = data[3]
@@ -135,13 +129,13 @@ def assign_points(conn, cursor, date):
             points = (height_function(size) *
                   uptime_logistic_function(uptime/duration) *
                   (duration / 86400))
-        cursor.execute('UPDATE summaries SET points = ? WHERE auth_address = ?'
-                       'AND date = ?', (points, str(address), str(date),))
+        cursor.execute('UPDATE summaries SET points = ? WHERE nodeid = ?'
+                       'AND date = ?', (points, str(nodeid), str(date),))
         conn.commit()
 
 
 def average_height(nodeid, first_date, last_date, collection):
-    """Returns the average height of the specified btc address
+    """Returns the average height of the specified nodeid
     between the first_date and last_date.
 
     Args:
@@ -233,7 +227,7 @@ def json_month_summary(cursor, nodeid):
     day_count = (last_date - first_date).days + 1
     for single_date in (first_date + timedelta(days=n) for n in range(day_count)):
         cursor.execute('SELECT date, uptime, duration, height, points FROM summaries '
-                       'WHERE auth_address = ? AND date = ?', (str(nodeid), str(single_date),))
+                       'WHERE nodeid = ? AND date = ?', (str(nodeid), str(single_date),))
         data = cursor.fetchone()
         if (data is not None):
             date = data[0]

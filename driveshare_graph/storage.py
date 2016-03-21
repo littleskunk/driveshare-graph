@@ -84,13 +84,26 @@ def init_stats_table(conn, cursor, collection):
 
 
 def update_stats_table(conn, cursor, collection):
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='stats'")
+    if len(cursor.fetchall()) == 0:
+        create_stats_table(conn, cursor)
+
+    cursor.execute("SELECT count(date) FROM stats")
+    if cursor.fetchone()[0] == 0:
+        init_stats_table(conn, cursor, collection)
+
     cursor.execute('SELECT MAX(date) from stats')
-    last_date = dt.datetime.fromtimestamp(int(cursor.fetchone()[0]))
-    for doc in collection.find({'time': {'$gt': last_date}}):
+    last_time = cursor.fetchone()[0]
+    last_date = dt.datetime.fromtimestamp(int(last_time))
+    for doc in collection.find({'time': {'$gt': last_time}}):
         tb = doc['total_TB']
         farmers = doc['total_farmers']
         date = time.mktime(doc['time'].timetuple())
-        cursor.execute('INSERT INTO stats(date, tb, farmers) VALUES (?, ?, ?)',
+        if last_time == date:
+            cursor.execute('UPDATE stats set tb=?, farmers=? WHERE date=?',
+                       (tb, farmers, date))
+        else:
+            cursor.execute('INSERT INTO stats(date, tb, farmers) VALUES (?, ?, ?)',
                        (date, tb, farmers))
     conn.commit()
 
@@ -105,7 +118,7 @@ def total_storage_graph(collection):
     parsed = json.loads(json_totals)
     terabytes = []
     times = []
-    for i in range(1, len(parsed) / 12):     #takes a data point from each hour
+    for i in range(1, int(len(parsed) / 12)):     #takes a data point from each hour
         j = i * 12
         terabytes.append(float(parsed[j]['total_TB']))
         d = dt.datetime.fromtimestamp(parsed[j]['time']['$date']/1e3)
@@ -134,7 +147,7 @@ def total_farmers_graph(collection):
     parsed = json.loads(json_totals)
     farmers = []
     times = []
-    for i in range(1, len(parsed) / 12):     #takes a data point from each hour
+    for i in range(1, int(len(parsed) / 12)):     #takes a data point from each hour
         j = i * 12
         farmers.append(int(parsed[j]['total_farmers']))
         d = dt.datetime.fromtimestamp(parsed[j]['time']['$date']/1e3)
