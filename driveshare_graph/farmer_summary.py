@@ -39,6 +39,7 @@ def init_summary_table(conn, cursor, collection):
     for single_date in (first_date + timedelta(days=n) for n in range(day_count)):
         create_daily_summary(conn, cursor, collection, single_date)
         assign_points(conn, cursor, single_date)
+    conn.commit()
 
 
 def update_table(conn, cursor, collection): # pragma: no cover
@@ -47,19 +48,19 @@ def update_table(conn, cursor, collection): # pragma: no cover
     if len(cursor.fetchall()) == 0:
         create_summary_table(conn, cursor)
 
-    cursor.execute("SELECT count(date) FROM summaries")
-    if cursor.fetchone()[0] == 0:
-        init_summary_table(conn, cursor, collection)
-
     cursor.execute('SELECT MAX(date) FROM summaries')
     date = cursor.fetchone()[0]
-    max_date = dt.datetime.strptime(date,  '%Y-%m-%d %H:%M:%S')
-    next_date = max_date + timedelta(days = 1)
-    last_date = end_date(collection)
-    day_count = (last_date - next_date).days
-    for single_date in (next_date + timedelta(days=n) for n in range(day_count)):
-        create_daily_summary(conn, cursor, collection, single_date)
-        assign_points(conn, cursor, single_date)
+    if date is None:
+        init_summary_table(conn, cursor, collection)
+    else:
+        max_date = dt.datetime.strptime(date,  '%Y-%m-%d %H:%M:%S')
+        next_date = max_date + timedelta(days = 1)
+        last_date = end_date(collection)
+        day_count = (last_date - next_date).days
+        for single_date in (next_date + timedelta(days=n) for n in range(day_count)):
+            create_daily_summary(conn, cursor, collection, single_date)
+            assign_points(conn, cursor, single_date)
+    conn.commit()
 
 
 def create_daily_summary(conn, cursor, collection, date):

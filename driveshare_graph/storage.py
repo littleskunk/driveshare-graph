@@ -88,23 +88,23 @@ def update_stats_table(conn, cursor, collection):
     if len(cursor.fetchall()) == 0:
         create_stats_table(conn, cursor)
 
-    cursor.execute("SELECT count(date) FROM stats")
-    if cursor.fetchone()[0] == 0:
-        init_stats_table(conn, cursor, collection)
 
     cursor.execute('SELECT MAX(date) from stats')
     last_time = cursor.fetchone()[0]
-    last_date = dt.datetime.fromtimestamp(int(last_time))
-    for doc in collection.find({'time': {'$gt': last_time}}):
-        tb = doc['total_TB']
-        farmers = doc['total_farmers']
-        date = time.mktime(doc['time'].timetuple())
-        if last_time == date:
-            cursor.execute('UPDATE stats set tb=?, farmers=? WHERE date=?',
-                       (tb, farmers, date))
-        else:
-            cursor.execute('INSERT INTO stats(date, tb, farmers) VALUES (?, ?, ?)',
-                       (date, tb, farmers))
+    if last_time is None:
+        init_stats_table(conn, cursor, collection)
+    else:
+        last_date = dt.datetime.fromtimestamp(int(last_time))
+        for doc in collection.find({'time': {'$gt': last_time}}):
+            tb = doc['total_TB']
+            farmers = doc['total_farmers']
+            date = time.mktime(doc['time'].timetuple())
+            if last_time == date:
+                cursor.execute('UPDATE stats set tb=?, farmers=? WHERE date=?',
+                           (tb, farmers, date))
+            else:
+                cursor.execute('INSERT INTO stats(date, tb, farmers) VALUES (?, ?, ?)',
+                           (date, tb, farmers))
     conn.commit()
 
 

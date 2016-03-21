@@ -55,7 +55,7 @@ def init_farmers_table(conn, cursor, collection):
         cursor.execute('''INSERT INTO farmers (nodeid, first_date, last_date,
                           uptime) VALUES(?, ?, ?, ?)''',
                        (str(nodeid), first_date, last_date, uptime))
-        conn.commit()
+    conn.commit()
 
 
 def nodeid_in_db(cursor, nodeid):
@@ -92,37 +92,37 @@ def update_farmers_table(conn, cursor, collection):
     if len(cursor.fetchall()) == 0:
         create_farmers_table(conn, cursor)
 
-    cursor.execute("SELECT count(last_date) FROM farmers")
-    if cursor.fetchone()[0] == 0:
-        init_farmers_table(conn, cursor, collection)
- 
     cursor.execute('SELECT MAX(last_date) FROM farmers')
-    last_time = int(cursor.fetchone()[0])
-    last_date = dt_from_timestamp(last_time)
+    last_time = cursor.fetchone()[0]
+    if last_time is None:
+        init_farmers_table(conn, cursor, collection)
+    else:
+        last_time = int(last_time)
+        last_date = dt_from_timestamp(last_time)
 
-    for doc in collection.find({'time': {'$gt': last_time}}).sort('time', 1):
-        doc_time = timestamp_from_dt(doc['time'])
-        for farmer in doc['farmers']:
-            nodeid = farmer['nodeid']
-            if nodeid_in_db(cursor, nodeid):
-                cursor.execute('''SELECT MAX(last_date) FROM farmers WHERE
-                                  nodeid=?''', (str(nodeid),))
-                farmer_time = int(cursor.fetchone()[0])
-                if farmer_time == last_time:
-                    uptime = doc_time - farmer_time
-                    cursor.execute('''UPDATE farmers SET last_date=?, uptime=uptime+?
-                                      WHERE nodeid=?''', (farmer_time, uptime, str(nodeid),))
-                    conn.commit()
+        for doc in collection.find({'time': {'$gt': last_time}}).sort('time', 1):
+            doc_time = timestamp_from_dt(doc['time'])
+            for farmer in doc['farmers']:
+                nodeid = farmer['nodeid']
+                if nodeid_in_db(cursor, nodeid):
+                    cursor.execute('''SELECT MAX(last_date) FROM farmers WHERE
+                                      nodeid=?''', (str(nodeid),))
+                    farmer_time = int(cursor.fetchone()[0])
+                    if farmer_time == last_time:
+                        uptime = doc_time - farmer_time
+                        cursor.execute('''UPDATE farmers SET last_date=?, uptime=uptime+?
+                                          WHERE nodeid=?''', (farmer_time, uptime, str(nodeid),))
+                        conn.commit()
+                    else:
+                        cursor.execute('''UPDATE farmers SET last_date=? WHERE
+                                          nodeid=?''', (farmer_time, str(nodeid),))
+                        conn.commit()
                 else:
-                    cursor.execute('''UPDATE farmers SET last_date=? WHERE
-                                      nodeid=?''', (farmer_time, str(nodeid),))
+                    cursor.execute('''INSERT INTO farmers (nodeid, first_date,
+                                      last_date, uptime) VALUES (?, ?, ?, ?) ''',
+                                      (str(nodeid), doc_time, doc_time, 0))
                     conn.commit()
-            else:
-                cursor.execute('''INSERT INTO farmers (nodeid, first_date,
-                                  last_date, uptime) VALUES (?, ?, ?, ?) ''',
-                                  (str(nodeid), doc_time, doc_time, 0))
-                conn.commit()
-            last_time = doc_time
+                last_time = doc_time
     conn.commit()
 
 
